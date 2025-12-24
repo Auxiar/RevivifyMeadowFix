@@ -2,7 +2,7 @@
   "id": "revivify-meadowfix",
   "name": "Revivify-MeadowFix",
   "version": "1.0.0",
-  "authors": "Dual, Daimyo, Auxiar Molkhun",
+  "authors": "Dual, Daimyo, & Auxiar Molkhun",
   "target_game_version": "v1.11.5",
   "description": "Adds Meadow support to the original Revivify while combining the functionality of the previous Revivify Meadow proximity revival as a toggleable feature. Original Description: <LINE><LINE>Revive slugcat and slugpup corpses, in co-op or not! Lay your friend flat on a solid floor and rhythmically tap GRAB twice per second to resuscitate them. Returning from death's door is an ordeal, so take care of them afterwards.<LINE><LINE>Configurable. Art by twitter.com/GarbageWastes and [original] code at github.com/Dual-Iron/revivify",
   "tags": [ "Accessibility", "Creatures", "Game Mechanics" ],
