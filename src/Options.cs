@@ -35,7 +35,7 @@ sealed class Options : OptionInterface
         float y = 390;
 
         var author = new OpLabel(20, 600 - 40, "Original by Dual, Proximity by Daimyo, Combination/Update by Auxiar Molkhun", true);
-        var github = new OpLabel(20, 600 - 40 - 40, "github.com/Auxiar/Revivify-MeadowFix", false);
+        var github = new OpLabel(20, 600 - 40 - 40, "github.com/Auxiar/Revivify_MeadowFix", false);
 
         var d1 = new OpLabel(new(220, y), Vector2.zero, "Revive speed multiplier", FLabelAlignment.Right);
         var s1 = new OpFloatSlider(ReviveSpeed, new Vector2(sliderX, y - 6), 300, decimalNum: 1);
