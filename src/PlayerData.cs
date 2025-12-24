@@ -1,8 +1,8 @@
-﻿namespace Revivify;
+﻿namespace Revivify_MeadowFix;
 
 sealed class PlayerData
 {
-    public bool exhausted;
+    public bool exhausted = false;
 
     public int animTime;
     public float compressionDepth; // serves as an indicator for how effective the compression was

@@ -1,4 +1,4 @@
-﻿namespace Revivify;
+﻿namespace Revivify_MeadowFix;
 
 enum AnimationStage
 {

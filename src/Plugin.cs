@@ -14,9 +14,9 @@ using UnityEngine;
 [assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
 #pragma warning restore CS0618
 
-namespace Revivify;
+namespace Revivify_MeadowFix;
 
-[BepInPlugin("com.dual.revivify", "Revivify", "1.2.0")]
+[BepInPlugin("com.aux.revivify-meadowfix", "Revivify-MeadowFix", "1.0.0")]
 sealed class Plugin : BaseUnityPlugin
 {
     static readonly ConditionalWeakTable<Player, PlayerData> cwt = new();
@@ -31,6 +31,19 @@ sealed class Plugin : BaseUnityPlugin
 
     private static bool CanRevive(Player medic, Player reviving)
     {
+        // If player wants to use proximity revive, calculate that and return early
+        // Code from Meadow Revivify mod
+        if (Options.ReviveWithProximity.Value)
+        {
+            return !reviving.playerState.permaDead && reviving.dead && 
+                !Plugin.Data(reviving).Expired && Plugin.Data(reviving).deaths < Options.DeathsUntilExpire.Value &&
+                Vector2.Distance(medic.firstChunk.pos, reviving.firstChunk.pos) <= Options.ReviveDistance.Value &&
+                (medic.bodyMode == Player.BodyModeIndex.Stand || medic.bodyMode == Player.BodyModeIndex.Crawl ||
+                 medic.bodyMode == Player.BodyModeIndex.Swimming || medic.bodyMode == Player.BodyModeIndex.CorridorClimb ||
+                 medic.bodyMode == Player.BodyModeIndex.ClimbingOnBeam || medic.bodyMode == Player.BodyModeIndex.ClimbIntoShortCut ||
+                 medic.bodyMode == Player.BodyModeIndex.Default || medic.bodyMode == Player.BodyModeIndex.WallClimb);
+        }
+        
         if (reviving.playerState.permaDead || !reviving.dead || reviving.grabbedBy.Count > 1 || reviving.Submersion > 0 || reviving.onBack != null
             || Data(reviving).Expired || Data(reviving).deaths >= Options.DeathsUntilExpire.Value
             || !medic.Consious || medic.grabbedBy.Count > 0 || medic.Submersion > 0 || medic.exhausted || medic.lungsExhausted || medic.gourmandExhausted) {
@@ -64,8 +77,10 @@ sealed class Plugin : BaseUnityPlugin
         On.RainWorld.Update += ErrorCatch;
         On.RainWorld.OnModsInit += RainWorld_OnModsInit;
 
-        new Hook(typeof(Player).GetMethod("get_Malnourished"), getMalnourished);
-        On.Player.CanIPutDeadSlugOnBack += Player_CanIPutDeadSlugOnBack;
+        // These hooks are not present in the Meadow Revivify, and might break meadow compatibility
+        //new Hook(typeof(Player).GetMethod("get_Malnourished"), getMalnourished);
+        //On.Player.CanIPutDeadSlugOnBack += Player_CanIPutDeadSlugOnBack;
+        
         On.Player.ctor += Player_ctor;
         On.Player.Die += Player_Die;
         On.HUD.FoodMeter.GameUpdate += FixFoodMeter;
@@ -88,7 +103,7 @@ sealed class Plugin : BaseUnityPlugin
     private void ErrorCatch(On.RainWorld.orig_Update orig, RainWorld self)
     {
         try {
-            orig(self);
+            orig.Invoke(self);
         }
         catch (Exception e) {
             Logger.LogError(e);
@@ -98,23 +113,23 @@ sealed class Plugin : BaseUnityPlugin
 
     private void RainWorld_OnModsInit(On.RainWorld.orig_OnModsInit orig, RainWorld self)
     {
-        orig(self);
+        orig.Invoke(self);
 
-        MachineConnector.SetRegisteredOI("revivify", new Options());
+        MachineConnector.SetRegisteredOI("revivify-meadowfix", new Options());
     }
 
     private readonly Func<Func<Player, bool>, Player, bool> getMalnourished = (orig, self) => {
-        return orig(self) || Data(self).deaths >= Options.DeathsUntilExhaustion.Value;
+        return orig.Invoke(self) || Data(self).deaths >= Options.DeathsUntilExhaustion.Value;
     };
 
     private bool Player_CanIPutDeadSlugOnBack(On.Player.orig_CanIPutDeadSlugOnBack orig, Player self, Player pickUpCandidate)
     {
-        return orig(self, pickUpCandidate) || (pickUpCandidate != null && self.slugOnBack != null && !Data(pickUpCandidate).Expired);
+        return orig.Invoke(self, pickUpCandidate) || (pickUpCandidate != null && self.slugOnBack != null && !Data(pickUpCandidate).Expired);
     }
 
     private void Player_ctor(On.Player.orig_ctor orig, Player self, AbstractCreature abstractCreature, World world)
     {
-        orig(self, abstractCreature, world);
+        orig.Invoke(self, abstractCreature, world);
 
         if (self.dead) {
             Data(self).expireTime = int.MaxValue;
@@ -129,18 +144,53 @@ sealed class Plugin : BaseUnityPlugin
             }
             Data(self).deaths++;
         }
-        orig(self);
+        orig.Invoke(self);
     }
 
     private void FixFoodMeter(On.HUD.FoodMeter.orig_GameUpdate orig, HUD.FoodMeter self)
     {
-        orig(self);
+        orig.Invoke(self);
 
         if (self.IsPupFoodMeter) {
             self.survivalLimit = self.pup.slugcatStats.foodToHibernate;
         }
     }
 
+    // Borrowed from the Meadow Revivify in place of original function
+    private void UpdatePlr(On.Player.orig_Update orig, Player self, bool eu)
+    {
+        orig.Invoke(self, eu);
+        if (self.isSlugpup && Plugin.Data(self).deaths >= Options.DeathsUntilComa.Value)
+        {
+            self.stun = 100;
+        }
+        if (self.dead)
+        {
+            Room room = self.room;
+            foreach (AbstractWorldEntity abstractWorldEntity in ((room != null) ? room.abstractRoom.entities : null))
+            {
+                AbstractCreature abstractCreature = abstractWorldEntity as AbstractCreature;
+                if (abstractCreature != null)
+                {
+                    Player player = abstractCreature.realizedCreature as Player;
+                    if (player != null && player != self && Plugin.CanRevive(player, self))
+                    {
+                        PlayerData playerData = Plugin.Data(self);
+                        playerData.deathTime += 0.025f;
+                        if (playerData.deathTime >= (float)Options.ReviveSpeed.Value)
+                        {
+                            Plugin.RevivePlayer(self);
+                            Plugin.Data(self).deathTime = 0f;
+                        }
+                        return;
+                    }
+                }
+            }
+            Plugin.Data(self).deathTime = 0f;
+        }
+    }
+
+    /*
     private void UpdatePlr(On.Player.orig_Update orig, Player self, bool eu)
     {
         orig(self, eu);
@@ -227,9 +277,24 @@ sealed class Plugin : BaseUnityPlugin
             }
         }
     }
+        */
 
     private void ReduceLife(On.Creature.orig_Violence orig, Creature self, BodyChunk source, Vector2? directionAndMomentum, BodyChunk hitChunk, PhysicalObject.Appendage.Pos hitAppendage, Creature.DamageType type, float damage, float stunBonus)
     {
+        // Meadow Revivify's implementation is (probably) fundamentally the same, but I like it better:
+        bool dead = self.dead;
+        orig.Invoke(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+        Player player = self as Player;
+        if (player != null && dead && player.dead && damage > 0f)
+        {
+            PlayerData playerData = Plugin.Data(player);
+            if (playerData.deathTime < 0f)
+            {
+                playerData.deathTime = 0f;
+            }
+            playerData.deathTime += damage * 0.34f;
+        }
+        /*
         bool wasDead = self.dead;
 
         orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
@@ -241,11 +306,12 @@ sealed class Plugin : BaseUnityPlugin
             }
             data.deathTime += damage * 0.34f;
         }
+        */
     }
 
     private bool DontEatPlayers(On.Player.orig_CanEatMeat orig, Player self, Creature crit)
     {
-        return crit is not Player && orig(self, crit);
+        return crit is not Player && orig.Invoke(self, crit);
     }
 
     private void DontMoveWhileReviving(On.Player.orig_GraphicsModuleUpdated orig, Player self, bool actuallyViewed, bool eu)
@@ -268,7 +334,7 @@ sealed class Plugin : BaseUnityPlugin
             }
         }
 
-        orig(self, actuallyViewed, eu);
+        orig.Invoke(self, actuallyViewed, eu);
 
         if (pos1 != default) {
             foreach (var grasp in self.grasps) {
@@ -371,7 +437,7 @@ sealed class Plugin : BaseUnityPlugin
     {
         try {
             disableHeavyCarry = true;
-            orig(self, eu);
+            orig.Invoke(self, eu);
         }
         finally {
             disableHeavyCarry = false;
@@ -379,7 +445,7 @@ sealed class Plugin : BaseUnityPlugin
     }
     private bool FixHeavyCarry(On.Player.orig_HeavyCarry orig, Player self, PhysicalObject obj)
     {
-        return !(disableHeavyCarry && obj is Player p && CanRevive(self, p)) && orig(self, obj);
+        return !(disableHeavyCarry && obj is Player p && CanRevive(self, p)) && orig.Invoke(self, obj);
     }
 
     private static void Compression(Player self, int grasp, PlayerData data, Player reviving, PlayerData revivingData, int difference)
@@ -448,7 +514,7 @@ sealed class Plugin : BaseUnityPlugin
 
     private void PlayerGraphics_Update(On.PlayerGraphics.orig_Update orig, PlayerGraphics self)
     {
-        orig(self);
+        orig.Invoke(self);
 
         PlayerData data = Data(self.player);
 
@@ -509,7 +575,7 @@ sealed class Plugin : BaseUnityPlugin
 
     private void PlayerGraphics_DrawSprites(On.PlayerGraphics.orig_DrawSprites orig, PlayerGraphics self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos)
     {
-        orig(self, sLeaser, rCam, timeStacker, camPos);
+        orig.Invoke(self, sLeaser, rCam, timeStacker, camPos);
 
         if (self.player.grabbedBy.Count == 1 && self.player.grabbedBy[0].grabber is Player medic && CanRevive(medic, self.player) && Data(medic).animTime >= 0) {
             sLeaser.sprites[9].y += 6;
@@ -524,7 +590,7 @@ sealed class Plugin : BaseUnityPlugin
 
     private void SlugcatHand_Update(On.SlugcatHand.orig_Update orig, SlugcatHand self)
     {
-        orig(self);
+        orig.Invoke(self);
 
         Player player = ((PlayerGraphics)self.owner).player;
         PlayerData data = Data(player);

@@ -1,7 +1,8 @@
-﻿using Menu.Remix.MixedUI;
+﻿using System;
+using Menu.Remix.MixedUI;
 using UnityEngine;
 
-namespace Revivify;
+namespace Revivify_MeadowFix;
 
 sealed class Options : OptionInterface
 {
@@ -10,6 +11,8 @@ sealed class Options : OptionInterface
     public static Configurable<int> DeathsUntilComa;
     public static Configurable<int> DeathsUntilExpire;
     public static Configurable<float> CorpseExpiryTime;
+    public static Configurable<bool> ReviveWithProximity;
+    public static Configurable<float> ReviveDistance;
 
     public Options()
     {
@@ -18,6 +21,8 @@ sealed class Options : OptionInterface
         DeathsUntilComa = config.Bind("cfgDeathsUntilComa", 2, new ConfigAcceptableRange<int>(1, 10));
         DeathsUntilExpire = config.Bind("cfgDeathsUntilExpire", 3, new ConfigAcceptableRange<int>(1, 10));
         CorpseExpiryTime = config.Bind("cfgCorpseExpiryTime", 1.5f, new ConfigAcceptableRange<float>(0.05f, 10f));
+        ReviveWithProximity = config.Bind("cfgReviveWithProximity", false, new ConfigurableInfo("Determines whether revival occurs by performing CPR or by simply standing within proximity of the dead player."));
+        ReviveDistance = config.Bind("cfgReviveDistance", 60f, new ConfigAcceptableRange<float>(1f, 120f));
     }
 
     public override void Initialize()
@@ -29,8 +34,8 @@ sealed class Options : OptionInterface
         float sliderX = 270;
         float y = 390;
 
-        var author = new OpLabel(20, 600 - 40, "by Dual", true);
-        var github = new OpLabel(20, 600 - 40 - 40, "github.com/Dual-Iron/revivify");
+        var author = new OpLabel(20, 600 - 40, "Original by Dual, Proximity by Daimyo, Combination/Update by Auxiar Molkhun", true);
+        var github = new OpLabel(20, 600 - 40 - 40, "github.com/Auxiar/Revivify-MeadowFix", false);
 
         var d1 = new OpLabel(new(220, y), Vector2.zero, "Revive speed multiplier", FLabelAlignment.Right);
         var s1 = new OpFloatSlider(ReviveSpeed, new Vector2(sliderX, y - 6), 300, decimalNum: 1);
@@ -47,6 +52,12 @@ sealed class Options : OptionInterface
         var d5 = new OpLabel(new(220, y -= 60), Vector2.zero, "Time until bodies expire, in minutes", FLabelAlignment.Right);
         var s5 = new OpFloatSlider(CorpseExpiryTime, new Vector2(sliderX, y - 6), 300, decimalNum: 1);
 
-        Tabs[0].AddItems(author, github, d1, s1, d2, s2, d3, s3, d4, s4, d5, s5);
+        var d6 = new OpLabel(new(220, y -= 60), Vector2.zero, "Revive using Proximity", FLabelAlignment.Right);
+        var s6 = new OpCheckBox(ReviveWithProximity, new Vector2(sliderX, y -6));
+        
+        var d7 = new OpLabel(new Vector2(220f, y -= 60f), Vector2.zero, "Distance to revive (60f = spear length)", FLabelAlignment.Right);
+        var s7 = new OpFloatSlider(ReviveDistance, new Vector2(sliderX, y - 6), 300, decimalNum: 1);
+
+        Tabs[0].AddItems(author, github, d1, s1, d2, s2, d3, s3, d4, s4, d5, s5, d6, s6, d7, s7);
     }
 }
