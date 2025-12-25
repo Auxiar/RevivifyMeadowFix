@@ -7,6 +7,8 @@ using System;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Permissions;
+using BepInEx.Logging;
+using DevInterface;
 using UnityEngine;
 
 // Allows access to private members
@@ -14,9 +16,24 @@ using UnityEngine;
 [assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
 #pragma warning restore CS0618
 
-namespace Revivify_MeadowFix;
+namespace RevivifyMeadowFix;
 
-[BepInPlugin("com.aux.revivify-meadowfix", "Revivify-MeadowFix", "1.0.0")]
+/*
+ * Everything in this plugin is from the original Revivify creator Dual, unless
+ * specified as being from Daimyo, who created the proximity-based revival and
+ * made the mod Rain Meadow compatible. I am only here to combine their methods
+ * to make the original CPR Revivify method work with Rain Meadow, and combine
+ * the two functionality's under one mod, and to keep it updated with the game.
+ *
+ * I am not a Rain World modder, I've modded one other game that used a custom
+ * game engine. I have game dev and programming experience which prompted me to
+ * give this a shot. I make no guarantees or any other assurances about whether
+ * this mod will work correctly or works as optimally as it can. With that, I
+ * hope you all enjoy the work that was put into it, and have fun. Toodles.
+ *
+ * - Auxiar Molkhun
+ */
+[BepInPlugin("com.auxiar.revivifymeadowfix", "Revivify Meadow Fix", "1.0.0")]
 sealed class Plugin : BaseUnityPlugin
 {
     static readonly ConditionalWeakTable<Player, PlayerData> cwt = new();
@@ -31,12 +48,11 @@ sealed class Plugin : BaseUnityPlugin
 
     private static bool CanRevive(Player medic, Player reviving)
     {
-        // If player wants to use proximity revive, calculate that and return early
-        // Code from Meadow Revivify mod
+        // Daimyo's Proximity implementation check
         if (Options.ReviveWithProximity.Value)
         {
             return !reviving.playerState.permaDead && reviving.dead && 
-                !Plugin.Data(reviving).Expired && Plugin.Data(reviving).deaths < Options.DeathsUntilExpire.Value &&
+                !Data(reviving).Expired && Data(reviving).deaths < Options.DeathsUntilExpire.Value &&
                 Vector2.Distance(medic.firstChunk.pos, reviving.firstChunk.pos) <= Options.ReviveDistance.Value &&
                 (medic.bodyMode == Player.BodyModeIndex.Stand || medic.bodyMode == Player.BodyModeIndex.Crawl ||
                  medic.bodyMode == Player.BodyModeIndex.Swimming || medic.bodyMode == Player.BodyModeIndex.CorridorClimb ||
@@ -44,6 +60,7 @@ sealed class Plugin : BaseUnityPlugin
                  medic.bodyMode == Player.BodyModeIndex.Default || medic.bodyMode == Player.BodyModeIndex.WallClimb);
         }
         
+        // Dual's original checks
         if (reviving.playerState.permaDead || !reviving.dead || reviving.grabbedBy.Count > 1 || reviving.Submersion > 0 || reviving.onBack != null
             || Data(reviving).Expired || Data(reviving).deaths >= Options.DeathsUntilExpire.Value
             || !medic.Consious || medic.grabbedBy.Count > 0 || medic.Submersion > 0 || medic.exhausted || medic.lungsExhausted || medic.gourmandExhausted) {
@@ -76,28 +93,34 @@ sealed class Plugin : BaseUnityPlugin
     {
         On.RainWorld.Update += ErrorCatch;
         On.RainWorld.OnModsInit += RainWorld_OnModsInit;
-
-        // These hooks are not present in the Meadow Revivify, and might break meadow compatibility
-        //new Hook(typeof(Player).GetMethod("get_Malnourished"), getMalnourished);
-        //On.Player.CanIPutDeadSlugOnBack += Player_CanIPutDeadSlugOnBack;
-        
         On.Player.ctor += Player_ctor;
         On.Player.Die += Player_Die;
         On.HUD.FoodMeter.GameUpdate += FixFoodMeter;
         On.Player.Update += UpdatePlr;
         On.Creature.Violence += ReduceLife;
         On.Player.CanEatMeat += DontEatPlayers;
-        On.Player.GraphicsModuleUpdated += DontMoveWhileReviving;
-        IL.Player.GrabUpdate += Player_GrabUpdate;
 
         // Fixes corpse being dropped when pressing Grab
+        On.PlayerGraphics.Update += PlayerGraphics_Update;
+        
+        // Functions dropped by Daimyo's mod:
+        On.PlayerGraphics.DrawSprites += PlayerGraphics_DrawSprites;
+        //new Hook(typeof(Player).GetMethod("get_Malnourished"), getMalnourished);
+        On.Player.CanIPutDeadSlugOnBack += Player_CanIPutDeadSlugOnBack;
+        On.Player.GraphicsModuleUpdated += DontMoveWhileReviving;
+        IL.Player.GrabUpdate += Player_GrabUpdate;
         On.Player.GrabUpdate += FixHeavyCarry;
         On.Player.HeavyCarry += FixHeavyCarry;
-
-        On.PlayerGraphics.Update += PlayerGraphics_Update;
-        IL.PlayerGraphics.DrawSprites += ChangeHeadSprite;
-        On.PlayerGraphics.DrawSprites += PlayerGraphics_DrawSprites;
         On.SlugcatHand.Update += SlugcatHand_Update;
+
+        /*
+         * Dual's version of this hook was breaking with meadow due to meadow loading the player graphics early,
+         * I'm not sure how Daimyo's fixes it, as his version gives me an error and refuses to compile (probably
+         * a reference problem on my end), but this is what I tracked down as the actual problem function, removing
+         * it functionally fixes the meadow incompatibility.
+         */
+        //IL.PlayerGraphics.DrawSprites += ChangeHeadSprite;
+        
     }
 
     private void ErrorCatch(On.RainWorld.orig_Update orig, RainWorld self)
@@ -114,17 +137,28 @@ sealed class Plugin : BaseUnityPlugin
     private void RainWorld_OnModsInit(On.RainWorld.orig_OnModsInit orig, RainWorld self)
     {
         orig.Invoke(self);
-
-        MachineConnector.SetRegisteredOI("revivify-meadowfix", new Options());
+        MachineConnector.SetRegisteredOI("auxiar.revivifymeadowfix", new Options());
     }
 
     private readonly Func<Func<Player, bool>, Player, bool> getMalnourished = (orig, self) => {
-        return orig.Invoke(self) || Data(self).deaths >= Options.DeathsUntilExhaustion.Value;
+        
+        return orig.Invoke(self) || (!Options.ReviveWithProximity.Value && Data(self).deaths >= Options.DeathsUntilExhaustion.Value);
     };
 
     private bool Player_CanIPutDeadSlugOnBack(On.Player.orig_CanIPutDeadSlugOnBack orig, Player self, Player pickUpCandidate)
     {
-        return orig.Invoke(self, pickUpCandidate) || (pickUpCandidate != null && self.slugOnBack != null && !Data(pickUpCandidate).Expired);
+        /*
+         * Daimyo's implementation doesn't include this at all, so as not to break meadow's default no-grabbing philosophy.
+         * However, while testing, this caused comatose slugpups to not be able to be placed on the player's back, hindering
+         * mobility by forcing the slugpup to be carried in both hands as what is essentially a living corpse. For Gameplay
+         * reason, I'm keeping Dual's original implementation as the default, despite it going against meadow's philosophy.
+         * I'll include it as a setting in-case players would like to disable it at the very least.
+         */
+        if (Options.AllowCorpsePiggyback.Value)
+        {
+            return orig.Invoke(self, pickUpCandidate) || (pickUpCandidate != null && self.slugOnBack != null && !Data(pickUpCandidate).Expired);   
+        }
+        return orig.Invoke(self, pickUpCandidate) || (!Options.ReviveWithProximity.Value && (pickUpCandidate != null && self.slugOnBack != null && !Data(pickUpCandidate).Expired));
     }
 
     private void Player_ctor(On.Player.orig_ctor orig, Player self, AbstractCreature abstractCreature, World world)
@@ -156,157 +190,181 @@ sealed class Plugin : BaseUnityPlugin
         }
     }
 
-    // Borrowed from the Meadow Revivify in place of original function
+    //private static float reviveSpeed =  1;
     private void UpdatePlr(On.Player.orig_Update orig, Player self, bool eu)
     {
         orig.Invoke(self, eu);
-        if (self.isSlugpup && Plugin.Data(self).deaths >= Options.DeathsUntilComa.Value)
-        {
-            self.stun = 100;
-        }
-        if (self.dead)
-        {
-            Room room = self.room;
-            foreach (AbstractWorldEntity abstractWorldEntity in ((room != null) ? room.abstractRoom.entities : null))
-            {
-                AbstractCreature abstractCreature = abstractWorldEntity as AbstractCreature;
-                if (abstractCreature != null)
-                {
-                    Player player = abstractCreature.realizedCreature as Player;
-                    if (player != null && player != self && Plugin.CanRevive(player, self))
-                    {
-                        PlayerData playerData = Plugin.Data(self);
-                        playerData.deathTime += 0.025f;
-                        if (playerData.deathTime >= (float)Options.ReviveSpeed.Value)
-                        {
-                            Plugin.RevivePlayer(self);
-                            Plugin.Data(self).deathTime = 0f;
-                        }
-                        return;
-                    }
-                }
-            }
-            Plugin.Data(self).deathTime = 0f;
-        }
-    }
 
-    /*
-    private void UpdatePlr(On.Player.orig_Update orig, Player self, bool eu)
-    {
-        orig(self, eu);
-
+        //reviveSpeed = Options.ReviveSpeed.Value * 3;
+        
         const int ticksToDie = 40 * 30; // 30 seconds
         const int ticksToRevive = 40 * 10; // 10 seconds
-
+    
         if (self.isSlugpup && Data(self).deaths >= Options.DeathsUntilComa.Value) {
             self.stun = 100;
         }
 
-        if (self.dead) {
-            ref float death = ref Data(self).deathTime;
-
-            if (death > 0.1f) {
+        // simplify deathTime ref
+        ref float death = ref Data(self).deathTime;
+        
+        // Run the expiry check for both one time
+        if (self.dead)
+        {
+            if (death > 0.1f)
+            {
                 Data(self).expireTime++;
             }
-            else {
+            else
+            {
                 Data(self).expireTime = 0;
             }
 
-            if (death > -0.1f) {
-                death += 1f / ticksToDie;
-            }
-            if (death < -0.5f && self.dangerGrasp == null) {
-                death -= 1f / ticksToRevive;
-
-                if (self.room?.shelterDoor != null && self.room.shelterDoor.IsClosing) {
-                    death = -1.1f;
-                }
-            }
-            if (death < -1) {
+            if (self.room?.shelterDoor != null && self.room.shelterDoor.IsClosing)
+            {
+                UnityEngine.Debug.Log($"Detected that we're in a shelter with the door closing, reviving incapacitated...");
                 RevivePlayer(self);
+                death = 0;
+            }
+        }
+
+        // If player wants to use proximity revive in place of CPR
+        if (Options.ReviveWithProximity.Value)
+        {   
+            // Daimyo's proximity-based method
+            if (self.dead)
+            {
+                Room room = self.room;
+                foreach (AbstractWorldEntity abstractWorldEntity in ((room != null) ? room.abstractRoom.entities : null))
+                {
+                    AbstractCreature abstractCreature = abstractWorldEntity as AbstractCreature;
+                    Player player = abstractCreature?.realizedCreature as Player;
+                    if (player != null && player != self && CanRevive(player, self) && self.dangerGrasp == null)
+                    {
+                        /*
+                         * Diamyo's implementation on when the player should be revived
+                         * is dependent on the frame-rate which makes it inconsistent
+                         * between players, and inconsistent at different frame rates.
+                         * Playing at 10fps mean it would take 4 seconds to revive by
+                         * default, whereas if you were playing at 120fps would only
+                         * take 1/3 of a second. Instead, we're going to try to
+                         * Frankenstein Dual's tick solution into Diamyo's timer-like
+                         * solution in order to keep similar functionality, but make
+                         * it more consistent in timing between the two.
+                         */
+                        
+                        // If the player can be revived (^) start countdown to revival
+                        death -= 1f / (ticksToRevive * Options.ReviveSpeed.Value);
+                        UnityEngine.Debug.Log($"Thing is being revived with value: {death}");
+                        
+                        // If countdown completes, revive player
+                        if (death <= -1f)
+                        {
+                            RevivePlayer(self);
+                            UnityEngine.Debug.Log($"Revived thing with death value at: {death}");
+                    
+                            if (self.grabbedBy.FirstOrDefault()?.grabber is Player p) {
+                                p.ThrowObject(self.grabbedBy[0].graspUsed, eu);
+                            }
+                            death = 0f;
+                            return;
+                        }
+                    }
+                }
+                // If player is not being revived, count back up (get more dead)
+                death += 1f / (ticksToDie);
+                UnityEngine.Debug.Log($"Thing is dying with value: {death}");
                 
-                if (self.grabbedBy.FirstOrDefault()?.grabber is Player p) {
-                    p.ThrowObject(self.grabbedBy[0].graspUsed, eu);
-                }
-            }
-
-            death = Mathf.Clamp(death, -1, 1);
-        }
-        else if (Data(self).waterInLungs > 0 && UnityEngine.Random.value < 1 / 40f && self.Consious) {
-            Data(self).waterInLungs -= UnityEngine.Random.value / 4f;
-
-            G(self).breath = Mathf.PI;
-
-            self.Stun(20);
-            self.Blink(10);
-            self.airInLungs = 0;
-            self.firstChunk.pos += self.firstChunk.Rotation * 3;
-
-            int amount = UnityEngine.Random.Range(3, 6);
-            for (int i = 0; i < amount; i++) {
-                Vector2 dir = Custom.RotateAroundOrigo(self.firstChunk.Rotation, -40f + 80f * UnityEngine.Random.value);
-
-                self.room.AddObject(new WaterDrip(self.firstChunk.pos + dir * 30, dir * (3 + 6 * UnityEngine.Random.value), true));
+                death = Mathf.Clamp(death, -1, 1);
             }
         }
-        else {
-            Data(self).deathTime = 0;
-        }
+        else // Dual's original CPR calculation
+        {
+            if (self.dead) {
 
-        if (Data(self).deaths >= Options.DeathsUntilExhaustion.Value) {
-            if (self.isSlugpup) {
-                self.slugcatStats.foodToHibernate = self.slugcatStats.maxFood;
-            }
-            if (self.aerobicLevel >= 1f) {
-                Data(self).exhausted = true;
-            }
-            else if (self.aerobicLevel < 0.3f) {
-                Data(self).exhausted = false;
-            }
-            if (Data(self).exhausted) {
-                self.slowMovementStun = Math.Max(self.slowMovementStun, (int)Custom.LerpMap(self.aerobicLevel, 0.7f, 0.4f, 6f, 0f));
-                if (self.aerobicLevel > 0.9f && UnityEngine.Random.value < 0.04f) {
-                    self.Stun(10);
+                if (death > -0.1f)
+                {
+                    death += 1f / ticksToDie;
                 }
-                if (self.aerobicLevel > 0.9f && UnityEngine.Random.value < 0.1f) {
-                    self.standing = false;
+
+                if (death < -0.5f && self.dangerGrasp == null)
+                {
+                    death -= 1f / ticksToRevive;
+
+                    if (self.room?.shelterDoor != null && self.room.shelterDoor.IsClosing)
+                    {
+                        death = -1.1f;
+                    }
                 }
-                if (!(self.lungsExhausted && self.animation != Player.AnimationIndex.SurfaceSwim)) {
-                    self.swimCycle += 0.05f;
+                
+                if (death < -1) {
+                    RevivePlayer(self);
+                    
+                    if (self.grabbedBy.FirstOrDefault()?.grabber is Player p) {
+                        p.ThrowObject(self.grabbedBy[0].graspUsed, eu);
+                    }
+                }
+    
+                death = Mathf.Clamp(death, -1, 1);
+            }
+            else if (Data(self).waterInLungs > 0 && UnityEngine.Random.value < 1 / 40f && self.Consious) {
+                Data(self).waterInLungs -= UnityEngine.Random.value / 4f;
+    
+                G(self).breath = Mathf.PI;
+    
+                self.Stun(20);
+                self.Blink(10);
+                self.airInLungs = 0;
+                self.firstChunk.pos += self.firstChunk.Rotation * 3;
+    
+                int amount = UnityEngine.Random.Range(3, 6);
+                for (int i = 0; i < amount; i++) {
+                    Vector2 dir = Custom.RotateAroundOrigo(self.firstChunk.Rotation, -40f + 80f * UnityEngine.Random.value);
+    
+                    self.room.AddObject(new WaterDrip(self.firstChunk.pos + dir * 30, dir * (3 + 6 * UnityEngine.Random.value), true));
+                }
+            }
+            else {
+                Data(self).deathTime = 0;
+            }
+    
+            if (Data(self).deaths >= Options.DeathsUntilExhaustion.Value) {
+                if (self.isSlugpup) {
+                    self.slugcatStats.foodToHibernate = self.slugcatStats.maxFood;
+                }
+                if (self.aerobicLevel >= 1f) {
+                    Data(self).exhausted = true;
+                }
+                else if (self.aerobicLevel < 0.3f) {
+                    Data(self).exhausted = false;
+                }
+                if (Data(self).exhausted) {
+                    self.slowMovementStun = Math.Max(self.slowMovementStun, (int)Custom.LerpMap(self.aerobicLevel, 0.7f, 0.4f, 6f, 0f));
+                    if (self.aerobicLevel > 0.9f && UnityEngine.Random.value < 0.04f) {
+                        self.Stun(10);
+                    }
+                    if (self.aerobicLevel > 0.9f && UnityEngine.Random.value < 0.1f) {
+                        self.standing = false;
+                    }
+                    if (!(self.lungsExhausted && self.animation != Player.AnimationIndex.SurfaceSwim)) {
+                        self.swimCycle += 0.05f;
+                    }
                 }
             }
         }
     }
-        */
 
     private void ReduceLife(On.Creature.orig_Violence orig, Creature self, BodyChunk source, Vector2? directionAndMomentum, BodyChunk hitChunk, PhysicalObject.Appendage.Pos hitAppendage, Creature.DamageType type, float damage, float stunBonus)
     {
-        // Meadow Revivify's implementation is (probably) fundamentally the same, but I like it better:
-        bool dead = self.dead;
-        orig.Invoke(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
-        Player player = self as Player;
-        if (player != null && dead && player.dead && damage > 0f)
-        {
-            PlayerData playerData = Plugin.Data(player);
-            if (playerData.deathTime < 0f)
-            {
-                playerData.deathTime = 0f;
-            }
-            playerData.deathTime += damage * 0.34f;
-        }
-        /*
         bool wasDead = self.dead;
 
-        orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+        orig.Invoke(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
 
-        if (self is Player p && wasDead && p.dead && damage > 0) {
-            PlayerData data = Data(p);
-            if (data.deathTime < 0) {
-                data.deathTime = 0;
-            }
-            data.deathTime += damage * 0.34f;
+        if (self is not Player p || !wasDead || !p.dead || !(damage > 0)) return;
+        PlayerData data = Data(p);
+        if (data.deathTime < 0) {
+            data.deathTime = 0;
         }
-        */
+        data.deathTime += damage * 0.34f;
     }
 
     private bool DontEatPlayers(On.Player.orig_CanEatMeat orig, Player self, Creature crit)
@@ -316,6 +374,8 @@ sealed class Plugin : BaseUnityPlugin
 
     private void DontMoveWhileReviving(On.Player.orig_GraphicsModuleUpdated orig, Player self, bool actuallyViewed, bool eu)
     {
+        orig.Invoke(self, actuallyViewed, eu);
+        
         Vector2 pos1 = default, pos2 = default, vel1 = default, vel2 = default;
         Vector2 posH = default, posB = default, velH = default, velB = default;
 
@@ -333,8 +393,6 @@ sealed class Plugin : BaseUnityPlugin
                 break;
             }
         }
-
-        orig.Invoke(self, actuallyViewed, eu);
 
         if (pos1 != default) {
             foreach (var grasp in self.grasps) {
@@ -356,6 +414,7 @@ sealed class Plugin : BaseUnityPlugin
 
     private void Player_GrabUpdate(ILContext il)
     {
+        if (Options.ReviveWithProximity.Value) return;
         try {
             ILCursor cursor = new(il);
 
@@ -436,8 +495,9 @@ sealed class Plugin : BaseUnityPlugin
     private void FixHeavyCarry(On.Player.orig_GrabUpdate orig, Player self, bool eu)
     {
         try {
-            disableHeavyCarry = true;
             orig.Invoke(self, eu);
+            if (Options.ReviveWithProximity.Value) return;
+            disableHeavyCarry = true;
         }
         finally {
             disableHeavyCarry = false;
@@ -450,6 +510,9 @@ sealed class Plugin : BaseUnityPlugin
 
     private static void Compression(Player self, int grasp, PlayerData data, Player reviving, PlayerData revivingData, int difference)
     {
+        // Don't perform compressions if using ReviveWithProximity
+        if (Options.ReviveWithProximity.Value) return;
+        
         if (self.slugOnBack != null) {
             self.slugOnBack.interactionLocked = true;
             self.slugOnBack.counter = 0;
@@ -511,11 +574,13 @@ sealed class Plugin : BaseUnityPlugin
             }
         }
     }
-
+    
+    
+    
     private void PlayerGraphics_Update(On.PlayerGraphics.orig_Update orig, PlayerGraphics self)
     {
         orig.Invoke(self);
-
+        
         PlayerData data = Data(self.player);
 
         float visualDecay = Mathf.Max(Mathf.Clamp01(data.deathTime), Mathf.Clamp01((float)data.deaths / Options.DeathsUntilExhaustion.Value) * 0.6f);
@@ -527,6 +592,9 @@ sealed class Plugin : BaseUnityPlugin
             return;
         }
 
+        // Don't continue with CPR animation if using Proximity
+        if (Options.ReviveWithProximity.Value) return;
+        
         AnimationStage stage = data.Stage();
 
         if (stage == AnimationStage.None) return;
@@ -549,41 +617,26 @@ sealed class Plugin : BaseUnityPlugin
             }
         }
     }
-
-    private void ChangeHeadSprite(ILContext il)
-    {
-        try {
-            ILCursor cursor = new(il);
-
-            // Move after num11 check and ModManager.MSC
-            cursor.GotoNext(MoveType.Before, i => i.MatchCall<PlayerGraphics>("get_RenderAsPup"));
-            cursor.Emit(OpCodes.Ldarg_0);
-            cursor.Emit(OpCodes.Ldloca, il.Body.Variables[9]);
-            cursor.EmitDelegate(ChangeHead);
-        }
-        catch (Exception e) {
-            Logger.LogError(e);
-        }
-    }
-
-    private void ChangeHead(PlayerGraphics self, ref int headNum)
-    {
-        if (self.player.grabbedBy.Count == 1 && self.player.grabbedBy[0].grabber is Player medic && CanRevive(medic, self.player) && Data(medic).animTime >= 0) {
-            headNum = 7;
-        }
-    }
-
+    
     private void PlayerGraphics_DrawSprites(On.PlayerGraphics.orig_DrawSprites orig, PlayerGraphics self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos)
     {
         orig.Invoke(self, sLeaser, rCam, timeStacker, camPos);
 
-        if (self.player.grabbedBy.Count == 1 && self.player.grabbedBy[0].grabber is Player medic && CanRevive(medic, self.player) && Data(medic).animTime >= 0) {
+        var player = self.player;
+        if (player == null) return;
+        if (sLeaser?.sprites == null || sLeaser.sprites.Length <= 9) return;
+        
+        if (player.grabbedBy?.Count == 1 && player.grabbedBy[0].grabber is Player medic && CanRevive(medic, player) && Data(medic).animTime >= 0) {
             sLeaser.sprites[9].y += 6;
             sLeaser.sprites[3].rotation -= 50 * Mathf.Sign(sLeaser.sprites[3].rotation);
             sLeaser.sprites[3].scaleX *= -1;
+            
+            sLeaser.sprites[9].element = Futile.atlasManager.GetElementWithName("FaceStunned");
+
+            return;
         }
 
-        if (sLeaser.sprites[9].element.name == "FaceDead" && Data(self.player).deathTime < -0.6f) {
+        if (sLeaser.sprites[9]?.element?.name == "FaceDead" && Data(player).deathTime < -0.6f) {
             sLeaser.sprites[9].element = Futile.atlasManager.GetElementWithName("FaceStunned");
         }
     }
@@ -592,13 +645,16 @@ sealed class Plugin : BaseUnityPlugin
     {
         orig.Invoke(self);
 
+        // Don't continue with CPR Animation if using Proximity
+        if (Options.ReviveWithProximity.Value) return;
+        
         Player player = ((PlayerGraphics)self.owner).player;
         PlayerData data = Data(player);
 
         if (player.grasps.FirstOrDefault(g => g?.grabbed is Player)?.grabbed is not Player reviving) {
             return;
         }
-
+        
         AnimationStage stage = data.Stage();
 
         if (stage == AnimationStage.None) return;
