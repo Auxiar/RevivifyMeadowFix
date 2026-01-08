@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <LangVersion>11</LangVersion>
-    <RootNamespace>RevivifyMeadowFix</RootNamespace>
+    <RootNamespace>RevivifyMeadowSupport</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
